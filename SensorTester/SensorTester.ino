@@ -10,6 +10,7 @@
 #define MAX_DISTANCE 400 // Distance Sensor Max Distance
 #define LE 32            // LE
 #define RE 30            // RE
+#define IR_DELAY 100000
 
 int LEVal = 0;
 int REVal = 0;
@@ -29,9 +30,9 @@ void loop() {
   encoder();
   int QTI1 = QTIVal(QTIsense1);
   int QTI2 = QTIVal(QTIsense2);
-  float d = pulseIn(IR_F, 0, 12500);
+  float d = pulseIn(IR_F, 0, IR_DELAY);
   float x = 1 / ((d / 1000000) * 2);
-  float c = pulseIn(IR_B, 0, 12500);
+  float c = pulseIn(IR_B, 0, IR_DELAY);
   float y = 1 / ((c / 1000000) * 2);
   int  dist = sonar.ping_cm();
 
