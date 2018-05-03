@@ -5,7 +5,7 @@ import org.gamecontrolplus.gui.*;
 
 
 ControlIO control;
-int x,y,z,a,b,c,d,X,Y,NX,NY,But,LSTICK;
+int x,y,z,a,b,c,d,X,Y,NX,NY,But,LSTICK,START,D,STAT;
 ControlDevice device;
 
 
@@ -38,61 +38,43 @@ b=int(device.getButton("B").getValue());
 c=int(device.getButton("X").getValue());
 d=int(device.getButton("Y").getValue());
 LSTICK=int(device.getButton("LSTICK").getValue());
-if(y>0){
-    Y=y;
-    NY=0;}
-if(y<0){
-    NY=y;
-    Y=0;}
-if(x>0){
-    X=x;
-    NX=0;}
-if(x<0){
-    NX=x;
-    X=0;}
-if(LSTICK==8){
-  Y=0;
-  X=0;
-  NY=0;
-  NX=0;
-}
+START=int(device.getButton("START").getValue());
+D=int(device.getButton("DPAD").getValue());
 
-
+STAT=0;
 if(a==8){But=2;}
 if(b==8){But=3;}
 if(c==8){But=1;}
 if(d==8){But=0;}
+if(START==8){STAT=24;};
+if(LSTICK==8){STAT=25;};
 
  if (z<0) 
  {
   
   print(But);
   print(",");
-  print(X);
+  print(D);
   print(",");
-  print(NX);
-  print(",");
-  print(Y);
-  print(",");
-  println(NY);
-  delay(25);
-  sendMessage(A_TAG, But,X,NX,Y,NY);
+  println(STAT);
+ 
+  sendMessage(A_TAG, But,D,STAT);
   }
 }
 
-void serialEvent(Serial p) {
-  // handle incoming serial data
-  String inString = myPort.readStringUntil('\n');
-  if(inString != null) {     
-    print( inString );   // echo text string from Arduino
-  }
-}
+//void serialEvent(Serial p) {
+//  // handle incoming serial data
+//  String inString = myPort.readStringUntil('\n');
+//  if(inString != null) {     
+//    print( inString );   // echo text string from Arduino
+//  }
+//}
 
 //void mousePressed() {
 //  sendMessage(A_TAG, But,b,c,d);
 //}
 
-void sendMessage(char tag, int a, int b, int c, int d, int e){
+void sendMessage(char tag, int a, int b, int c){
   // send the given index and value to the serial port
   myPort.write(HEADER);
   myPort.write(tag);
@@ -102,8 +84,5 @@ void sendMessage(char tag, int a, int b, int c, int d, int e){
   myPort.write(b & 0xff);  //lsb
   myPort.write((char)(c / 256)); // msb
   myPort.write(c & 0xff);  //lsb
-  myPort.write((char)(d / 256)); // msb
-  myPort.write(d & 0xff);  //lsb
-  myPort.write((char)(e / 256)); // msb
-  myPort.write(e & 0xff);  //lsb
+
 }
