@@ -2,7 +2,7 @@
 #include <NewPing.h>
 
 //============ Change these for each robot
-// Good Wiring Robot 
+// Good Wiring Robot
 
 #define robotnum 1          // Robot Number (1, 2, 3)
 #define LF 9                // Left Motor Forward
@@ -34,9 +34,10 @@
 #define MinDist 5           // Minimum Measurable Distance
 #define LiftDist 320        // Distance Lift Box travels from top to bottom
 #define IR_DELAY 30000
-#define INC 30
+#define INC 2
+#define AVG 20
 
-int Sp = 1* 255;          // Straight Speed limiting value to help encoders keep up
+int Sp = 1 * 255;         // Straight Speed limiting value to help encoders keep up
 int TSp = .7 * 255;         // Turn Speed limiting value to help encoders keep up
 int SPC = .95;              // Motor Catch up value if encoder is greater than other (<1)
 int SPCI = 1;            // Motor Catch up value if encoder is less than other (>1)
@@ -53,16 +54,29 @@ int SPCI = 1;            // Motor Catch up value if encoder is less than other (
 AccelStepper stepper1(FULLSTEP, motorPin1, motorPin3, motorPin2, motorPin4);
 NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
 
-int LEVal=0;
-int REVal=0;
-int LEI=0;
-int REI=0;
+//============ Encoder Variables
+int L=0;
+int R=0;
+unsigned long LEVal = 0;
+unsigned long REVal = 0;
+int LEI = 0;
+int REI = 0;
 int LELast = 0;
 int RELast = 0;
 int LEState = 0;
 int REState = 0;
-unsigned long LEV;
-unsigned long REV;
+int LEV;
+int REV;
+unsigned long LEVS;
+unsigned long REVS;
+int LEVA;
+int REVA;
+int LEVL;
+int REVL;
+int LEVAL;
+#define RECOMP 130
+#define LECOMP 0
+
 
 int QTI1;
 int QTI2;
@@ -118,81 +132,75 @@ void setup() {
   motorOff();
 
   ledTest();
- 
+
 
 }
 
 
 void loop() {
   DataReceive();
-  TIME=micros();
-  
-    if(LEVal>=(INC+LEI)){
-    LEVel();
-  }
-  
-  if(REVal>=(INC+REI)){
-    REVel();
-  }
-  
-      analogWrite(LF, Sp);
-      analogWrite(RF, Sp);
-      analogWrite(LR, 0);
-      analogWrite(RR, 0);
-      delay(2000);
+  TIME = micros();
 
-      
-//      analogWrite(LR, SP);
-//      analogWrite(RR, SP);
-//      analogWrite(LF, 0);
-//      analogWrite(RF, 0);
-//      delay(2000);
+
+  analogWrite(LF, Sp);
+  analogWrite(RF, Sp);
+  //analogWrite(RF, 1*Sp);
+  analogWrite(LR, 0);
+  analogWrite(RR, 0);
+  //delay(2000);
+
+
+  //      analogWrite(LR, SP);
+  //      analogWrite(RR, .8*SP);
+  //      analogWrite(LF, 0);
+  //      analogWrite(RF, 0);
+  //      delay(2000);
 
   if (DEBUG == true) {
     debug();
   }
-  
-//  if (LIFT_COMPL == false) {
-//    //QTICheck();
-//  }
-//
-//  IR();
-//
-//  if (DesiredRobot == robotnum && LIFT_COMPL == false)              // Send received values to motor
-//  {
-//    if (C > 0) {
-//      StageAssign();
-//    }
-//    motorMapping();
-//    if (DEBUG == true) {
-//      debug();
-//    }
-//  }
-//
-//  if (DesiredRobot != robotnum && DesiredRobot > 0  && LIFT_COMPL == false)              // check if this robot should not be receiving the command
-//  {
-//    motorOff();
-//    if (DEBUG == true) {
-//      debug();
-//    }
-//  }
-//
-//  if (DesiredRobot != robotnum && LIFT_COMPL == true)            // Send received values to motor
-//  {
-//
-//    motorReverseMapping();
-//    if (DEBUG == true) {
-//      debug();
-//    }
-//  }
-//
-//  if (DesiredRobot == robotnum && LIFT_COMPL == true)             // Send received values to motor
-//  {
-//    motorMapping();
-//    if (DEBUG == true) {
-//      debug();
-//    }
-//  }
+
+  //  if (LIFT_COMPL == false) {
+  //    //QTICheck();
+  //  }
+  //
+  //  IR();
+  //
+  //  if (DesiredRobot == robotnum && LIFT_COMPL == false)              // Send received values to motor
+  //  {
+  //    if (C > 0) {
+  //      StageAssign();
+  //    }
+  //    motorMapping();
+  //    if (DEBUG == true) {
+  //      debug();
+  //    }
+  //  }
+  //
+  //  if (DesiredRobot != robotnum && DesiredRobot > 0  && LIFT_COMPL == false)              // check if this robot should not be receiving the command
+  //  {
+  //    motorOff();
+  //    if (DEBUG == true) {
+  //      debug();
+  //    }
+  //  }
+  //
+  //  if (DesiredRobot != robotnum && LIFT_COMPL == true)            // Send received values to motor
+  //  {
+  //
+  //    motorReverseMapping();
+  //    if (DEBUG == true) {
+  //      debug();
+  //    }
+  //  }
+  //
+  //  if (DesiredRobot == robotnum && LIFT_COMPL == true)             // Send received values to motor
+  //  {
+  //    motorMapping();
+  //    if (DEBUG == true) {
+  //      debug();
+  //    }
+  //  }
 }
 
 ////////////// Stages
@@ -244,7 +252,8 @@ void Lower() {
 //============
 
 void motorMapping() {
-
+  //Diff=(LEVA-REVA);
+  
   if (B == 2) {               // Forward
 
     if (LEVal == REVal) {
@@ -339,9 +348,10 @@ void motorMapping() {
 //============
 
 void motorReverseMapping() {
+  
 
   if (B == 6) {               // Forward
-
+    
     if (LEVal == REVal) {
       analogWrite(LF, Sp);
       analogWrite(RF, Sp);
@@ -455,14 +465,28 @@ void motorOff() {
 
 void Lencoder() {
   LEVal++;
+  if (LEVal >= (INC + LEI)) {
+    LEVel();
+  }
 }
 
 //============
 
-void LEVel(){
-  LEV=((LEI+INC)-LEVal)/(TIME-LTIME);
-  LTIME=TIME;
-  LEI=LEVal;
+void LEVel() {
+  LEV = ((LEVal - LEI) / ((micros() - LTIME) * .0000001))+LECOMP;
+  if(LEV>=5000){
+    LEV=LEVL;
+  }
+  LTIME = micros();
+  LEI = LEVal;
+  L++;
+  LEVS=LEVS+LEV;
+  if(L==AVG){
+    LEVA=LEVS/AVG;
+    L=0;
+    LEVS=0;
+  }
+  LEVL=LEV;
 }
 
 
@@ -470,14 +494,29 @@ void LEVel(){
 
 void Rencoder() {
   REVal++;
+  if (REVal >= (INC + REI)) {
+    REVel();
+  }
 }
 
 //============
 
-void REVel(){
-  REV=((REI+INC)-REVal)/(TIME-RTIME);
-  RTIME=TIME;
-  REI=REVal;
+void REVel() {
+    
+  REV = ((REVal - REI) / ((micros() - RTIME) * .0000001))+RECOMP;
+  if(REV>=5000){
+    REV=REVL;
+  }
+  RTIME = micros();
+  REI = REVal;
+  R++;
+  REVS=REVS+REV;
+  if(R==AVG){
+    REVA=REVS/AVG;
+    R=0;
+    REVS=0;
+  }
+  REVL=REV;
 }
 
 
@@ -493,9 +532,9 @@ void REVel(){
 //============
 
 void QTICheck() {
-//  QTI1 = QTIVal(QTIsense1);
+  //  QTI1 = QTIVal(QTIsense1);
   QTI2 = QTIVal(QTIsense2);
-  QTI1=0;
+  QTI1 = 0;
   if (DEBUG == true) {
     debug();
   }
@@ -570,28 +609,53 @@ void IR() {
 
 ////////////// Sensors
 //============
+long DIFFS=0;
+long Diff;
+long ADiff;
+int NDiffs=0;
 void debug() {
-//  Serial.print(" | Robot: ");
-//  Serial.print(DesiredRobot);
-//  Serial.print(" | DPad: ");
-//  Serial.print(B);
-//  Serial.print(" | C: ");
-//  Serial.print(C);
-//  Serial.print(" | DEBUGGER: ");
-//  Serial.print(DEBBUGER);
-//  Serial.print(" | Dist: ");
-//  Serial.print(dist);
-//  Serial.print(" | Stepper: ");
-//  Serial.print(stepper1.currentPosition());
+ if(REVA!=LEVAL){
+  NDiffs=NDiffs+1;
+  Diff=(LEVA-REVA);
+  if(Diff>-200 && Diff<200){
+  DIFFS=(DIFFS+Diff);
+  ADiff=(DIFFS/NDiffs);
+  //  Serial.print(" | Robot: ");
+  //  Serial.print(DesiredRobot);
+  //  Serial.print(" | DPad: ");
+  //  Serial.print(B);
+  //  Serial.print(" | C: ");
+  //  Serial.print(C);
+  //  Serial.print(" | DEBUGGER: ");
+  //  Serial.print(DEBBUGER);
+  //  Serial.print(" | Dist: ");
+  //  Serial.print(dist);
+  //  Serial.print(" | Stepper: ");
+  //  Serial.print(stepper1.currentPosition());
+  // Serial.print(" | LE: ");
+  //  Serial.print(LEVal);
+  //  Serial.print(" | RE: ");
+  //  Serial.print(REVal);
   Serial.print(" | LE: ");
   Serial.print(LEV);
   Serial.print(" | RE: ");
-  Serial.println(REV);
+  Serial.print(REV);
+  Serial.print(" | LEA: ");
+  Serial.print(LEVA);
+  Serial.print(" | REA: ");
+  Serial.print(REVA);
+  Serial.print(" | DIFF: ");
+  Serial.print(LEVA-REVA);
+  Serial.print(" | Avg Diff: ");
+  Serial.println(ADiff);
   delay(25);
+ }
+ }
+ LEVAL=REVA;
 }
 
 //============
-void ledTest(){
+void ledTest() {
   digitalWrite(GREEN, HIGH);
   delay(100);
   digitalWrite(GREEN, LOW);
@@ -602,24 +666,24 @@ void ledTest(){
   delay(100);
   digitalWrite(RED, HIGH);
   delay(100);
-  digitalWrite(RED, LOW);  
+  digitalWrite(RED, LOW);
 }
 
 
-void LEDDebug(){
-    if(LEVal==REVal){
+void LEDDebug() {
+  if (LEVal == REVal) {
     digitalWrite(RED, LOW);
     digitalWrite(GREEN, LOW);
     digitalWrite(YELLOW, LOW);
   }
 
-  if(LEVal>REVal){
+  if (LEVal > REVal) {
     digitalWrite(RED, HIGH);
     digitalWrite(GREEN, LOW);
     digitalWrite(YELLOW, LOW);
   }
 
-    if(LEVal>REVal){
+  if (LEVal > REVal) {
     digitalWrite(RED, LOW);
     digitalWrite(GREEN, HIGH);
     digitalWrite(YELLOW, LOW);
