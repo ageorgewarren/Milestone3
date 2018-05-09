@@ -1,5 +1,11 @@
 #include <AccelStepper.h>
 #include <NewPing.h>
+#include <PID_v1.h>
+#include "I2Cdev.h"
+#include "MPU6050_6Axis_MotionApps20.h"
+#include "Wire.h"
+
+
 
 //============ Change these for each robot
 // Good Wiring Robot
@@ -42,6 +48,55 @@ int TSp = .7 * 255;         // Turn Speed limiting value to help encoders keep u
 int SPC = .95;              // Motor Catch up value if encoder is greater than other (<1)
 int SPCI = 1;            // Motor Catch up value if encoder is less than other (>1)
 
+//============ Gyro and PID
+
+double yawSetpoint, modifiedCurrentYaw, motorOffsetOutput;
+double currentYaw;
+double Kp = 5.0, Ki = 0.5, Kd = 0;
+PID steeringPID(&modifiedCurrentYaw, &motorOffsetOutput, &yawSetpoint, Kp, Ki, Kd, DIRECT);
+const int StabilizeSeconds = 15;
+double initialPose = 0.0;
+
+MPU6050 mpu;
+
+const uint8_t InterruptPin = 2;
+const uint8_t LedPin = GREEN;
+
+// MPU control/status vars
+uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
+uint8_t devStatus;      // return status after each device operation (0 = success, !0 = error)
+uint16_t packetSize;    // expected DMP packet size (default is 42 bytes)
+uint16_t fifoCount;     // count of all bytes currently in FIFO
+uint8_t fifoBuffer[64]; // FIFO storage buffer
+
+// orientation/motion vars
+Quaternion q;           // [w, x, y, z]         quaternion container
+VectorInt16 aa;         // [x, y, z]            accel sensor measurements
+VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measurements
+VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
+VectorFloat gravity;    // [x, y, z]            gravity vector
+float euler[3];         // [psi, theta, phi]    Euler angle container
+float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+
+const double RAD2DEG = 180.0 / M_PI;
+const double DEG2RAD = M_PI / 180.0;
+
+
+volatile bool mpuInterrupt = false;     // indicates whether MPU interrupt pin has gone high
+void dmpDataReady() {
+  mpuInterrupt = true;
+}
+
+void blink(uint8_t flashes, int pause) {
+  for (uint8_t i = 0; i < flashes; i++) {
+    digitalWrite(LedPin, HIGH);
+    delay(pause);
+    digitalWrite(LedPin, LOW);
+    delay(pause);
+  }
+}
+
+
 //============ Global Values
 
 #define motorPin1  S1     // IN1 on the ULN2003 driver 1
@@ -54,28 +109,6 @@ int SPCI = 1;            // Motor Catch up value if encoder is less than other (
 AccelStepper stepper1(FULLSTEP, motorPin1, motorPin3, motorPin2, motorPin4);
 NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
 
-//============ Encoder Variables
-int L=0;
-int R=0;
-unsigned long LEVal = 0;
-unsigned long REVal = 0;
-int LEI = 0;
-int REI = 0;
-int LELast = 0;
-int RELast = 0;
-int LEState = 0;
-int REState = 0;
-int LEV;
-int REV;
-unsigned long LEVS;
-unsigned long REVS;
-int LEVA;
-int REVA;
-int LEVL;
-int REVL;
-int LEVAL;
-#define RECOMP 130
-#define LECOMP 0
 
 
 int QTI1;
@@ -109,12 +142,82 @@ bool LIFT_COMPL = false;
 //============
 
 void setup() {
+
+
   Serial.begin(115200);
   Serial2.begin(9600);
 
-  attachInterrupt(digitalPinToInterrupt(RE), Rencoder, FALLING);
-  attachInterrupt(digitalPinToInterrupt(LE), Lencoder, FALLING);
+  Wire.begin();
+  Wire.setClock(400000); // 400kHz I2C clock
 
+  // setup/initialization for the PID controller
+  setYaw(0.0);
+  steeringPID.SetOutputLimits(-100.0, 100.0);  // **************** Check this ***************
+  steeringPID.SetSampleTime(10);
+  steeringPID.SetMode(AUTOMATIC);
+
+  mpu.initialize();
+  pinMode(InterruptPin, INPUT);
+
+  Serial.println(F("Testing device connections..."));
+  if (!mpu.testConnection()) {
+    Serial.println(F("MPU6050 connection failed"));
+    // stay here, we can't do anything
+    while (true) {
+      blink(5, 50);
+      delay(500);
+    }
+  }
+  Serial.println(F("MPU6050 connection successful"));
+
+  mpu.setXAccelOffset(-426);
+  mpu.setYAccelOffset(71);
+  mpu.setZAccelOffset(1193);
+  mpu.setXGyroOffset(164);
+  mpu.setYGyroOffset(-23);
+  mpu.setZGyroOffset(9);
+
+  Serial.println(F("Initializing DMP..."));
+  devStatus = mpu.dmpInitialize();
+
+  // make sure it worked (returns 0 if so)
+  if (devStatus == 0) {
+    // turn on the DMP, now that it's ready
+    Serial.println(F("Enabling DMP..."));
+    mpu.setDMPEnabled(true);
+
+    // enable Arduino interrupt detection
+    Serial.print(F("Enabling interrupt detection on pin "));
+    Serial.print(InterruptPin);
+    Serial.println(F("..."));
+    attachInterrupt(digitalPinToInterrupt(InterruptPin), dmpDataReady, RISING);
+    mpuIntStatus = mpu.getIntStatus();
+
+    Serial.println(F("DMP ready! Waiting for first interrupt..."));
+
+    // get expected DMP packet size for later comparison
+    packetSize = mpu.dmpGetFIFOPacketSize();
+  } else {
+    // ERROR!
+    // 1 = initial memory load failed
+    // 2 = DMP configuration updates failed
+    // (if it's going to break, usually the code will be 1)
+    Serial.print(F("DMP Initialization failed (code "));
+    Serial.print(devStatus);
+    Serial.println(F(")"));
+    while (true) {
+      blink(10, 50);
+      delay(500);
+    }
+  }
+
+  Serial.println(F("Stabilizing..."));
+  for (uint8_t i = 0; i < StabilizeSeconds; i++) {
+    digitalWrite(LedPin, HIGH);
+    delay(500);
+    digitalWrite(LedPin, LOW);
+    delay(500);
+  }
 
   pinMode(LF, OUTPUT);
   pinMode(LR, OUTPUT);
@@ -123,6 +226,8 @@ void setup() {
   pinMode(GREEN, OUTPUT);
   pinMode(YELLOW, OUTPUT);
   pinMode(RED, OUTPUT);
+
+
 
   stepper1.setMaxSpeed(1000.0);
   stepper1.setAcceleration(900.0);
@@ -137,17 +242,29 @@ void setup() {
 }
 
 
+
 void loop() {
-  DataReceive();
-  TIME = micros();
+  static unsigned long moveTimer = 0;
+  static uint8_t state = 220;
+  static int moveSpeed = 0.0;
+  static int stateCounter = 0;
 
 
-  analogWrite(LF, Sp);
-  analogWrite(RF, Sp);
-  //analogWrite(RF, 1*Sp);
-  analogWrite(LR, 0);
-  analogWrite(RR, 0);
-  //delay(2000);
+
+  setYaw(0.0);
+  GYRO();
+
+
+  if (steeringPID.Compute()) {
+    motorMapping();
+    //    if(yawSetpoint,modifiedCurrentYaw
+  }
+
+  Serial.print(yawSetpoint);
+  Serial.print(',');
+  Serial.print(modifiedCurrentYaw);
+  Serial.print(',');
+  Serial.println(motorOffsetOutput);
 
 
   //      analogWrite(LR, SP);
@@ -251,93 +368,170 @@ void Lower() {
 ////////////// Driving
 //============
 
+void setYaw(double setpoint) {
+  // computes a real yaw from a relative yaw
+  // cleans up angle issues
+  yawSetpoint = setpoint + initialPose;
+  if (yawSetpoint > 180.0)
+    yawSetpoint -= 360.0;
+  else if (yawSetpoint < -180.0)
+    yawSetpoint += 360.0;
+}
+
+void GYRO() {
+
+  static bool firstTime = true;
+
+  currentYaw = (double)ypr[0] * RAD2DEG;
+  if (abs(currentYaw - yawSetpoint) > 180.0) {
+    if (currentYaw >= 0) {
+      modifiedCurrentYaw = currentYaw - 360.0;
+    }
+    else {
+      modifiedCurrentYaw = currentYaw + 360.0;
+    }
+  }
+  else {
+    modifiedCurrentYaw = currentYaw;
+  }
+
+  if (mpuInterrupt || (fifoCount >= packetSize)) {
+
+    // reset interrupt flag and get INT_STATUS byte
+    mpuInterrupt = false;
+    mpuIntStatus = mpu.getIntStatus();
+
+    // get current FIFO count
+    fifoCount = mpu.getFIFOCount();
+
+    // check for overflow (this should never happen unless our code is too inefficient)
+    if ((mpuIntStatus & 0x10) || fifoCount == 1024) {
+      // reset so we can continue cleanly
+      mpu.resetFIFO();
+      Serial.println(F("FIFO overflow!"));
+      digitalWrite(GREEN, HIGH);
+
+      // otherwise, check for DMP data ready interrupt (this should happen frequently)
+    } else if (mpuIntStatus & 0x02) {
+      // wait for correct available data length, should be a VERY short wait
+      while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
+
+      // read a packet from FIFO
+      mpu.getFIFOBytes(fifoBuffer, packetSize);
+
+      // track FIFO count here in case there is > 1 packet available
+      // (this lets us immediately read more without waiting for an interrupt)
+      fifoCount -= packetSize;
+
+      mpu.dmpGetQuaternion(&q, fifoBuffer);
+      mpu.dmpGetGravity(&gravity, &q);
+      mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+      if (firstTime) {
+        initialPose = (double)ypr[0] * RAD2DEG;
+        firstTime = false;
+      }
+
+      digitalWrite(GREEN, LOW);
+
+    }
+  }
+}
+
+//============
+
 void motorMapping() {
-  //Diff=(LEVA-REVA);
-  
-  if (B == 2) {               // Forward
 
-    if (LEVal == REVal) {
-      analogWrite(LF, Sp);
-      analogWrite(RF, Sp);
-      analogWrite(LR, 0);
-      analogWrite(RR, 0);
-    }
-    if (LEVal < REVal) {
-      analogWrite(LF, (Sp * SPCI));
-      analogWrite(RF, (Sp * SPC));
-      analogWrite(LR, 0);
-      analogWrite(RR, 0);
-    }
-    if (LEVal > REVal) {
-      analogWrite(LF, (Sp * SPC));
-      analogWrite(RF, (Sp * SPCI));
-      analogWrite(LR, 0);
-      analogWrite(RR, 0);
-    }
-  }
-  if (B == 6) {               // Reverse
+  int moveSpeed = 255;
 
-    if (LEVal == REVal) {
-      analogWrite(LR, Sp);
-      analogWrite(RR, Sp);
-      analogWrite(LF, 0);
-      analogWrite(RF, 0);
-    }
-    if (LEVal < REVal) {
-      analogWrite(LR, (Sp * SPCI));
-      analogWrite(RR, (Sp * SPC));
-      analogWrite(LF, 0);
-      analogWrite(RF, 0);
-    }
-    if (LEVal > REVal) {
-      analogWrite(LR, (Sp * SPC));
-      analogWrite(RR, (Sp * SPCI));
-      analogWrite(LF, 0);
-      analogWrite(RF, 0);
-    }
-  }
-  if (B == 4) {               // Right
-    if (LEVal == REVal) {
-      analogWrite(LF, TSp);
-      analogWrite(RR, TSp);
-      analogWrite(LR, 0);
-      analogWrite(RF, 0);
-    }
-    if (LEVal < REVal) {
-      analogWrite(LF, (TSp * SPCI));
-      analogWrite(RR, (TSp * SPC));
-      analogWrite(LR, 0);
-      analogWrite(RF, 0);
-    }
-    if (LEVal > REVal) {
-      analogWrite(LF, (TSp * SPC));
-      analogWrite(RR, (TSp * SPCI));
-      analogWrite(LR, 0);
-      analogWrite(RF, 0);
-    }
-  }
-  if (B == 8) {               // Left
-    if (LEVal == REVal) {
-      analogWrite(LR, TSp);
-      analogWrite(RF, TSp);
-      analogWrite(LF, 0);
-      analogWrite(RR, 0);
-    }
-    if (LEVal < REVal) {
-      analogWrite(LR, (TSp * SPCI));
-      analogWrite(RF, (TSp * SPC));
-      analogWrite(LF, 0);
-      analogWrite(RR, 0);
-    }
-    if (LEVal > REVal) {
-      analogWrite(LR, (TSp * SPC));
-      analogWrite(RF, (TSp * SPCI));
-      analogWrite(LF, 0);
-      analogWrite(RR, 0);
-    }
-  }
+  analogWrite(LF, moveSpeed + motorOffsetOutput);
+  analogWrite(RF, moveSpeed - motorOffsetOutput);
+  analogWrite(LR, 0);
+  analogWrite(RR, 0);
+
+  //  if (B == 2) {               // Forward
+  //
+  //    if (LEVal == REVal) {
+  //      analogWrite(LF, Sp);
+  //      analogWrite(RF, Sp);
+  //      analogWrite(LR, 0);
+  //      analogWrite(RR, 0);
+  //    }
+  //    if (LEVal < REVal) {
+  //      analogWrite(LF, (Sp * SPCI));
+  //      analogWrite(RF, (Sp * SPC));
+  //      analogWrite(LR, 0);
+  //      analogWrite(RR, 0);
+  //    }
+  //    if (LEVal > REVal) {
+  //      analogWrite(LF, (Sp * SPC));
+  //      analogWrite(RF, (Sp * SPCI));
+  //      analogWrite(LR, 0);
+  //      analogWrite(RR, 0);
+  //    }
+  //  }
+  //  if (B == 6) {               // Reverse
+  //
+  //    if (LEVal == REVal) {
+  //      analogWrite(LR, Sp);
+  //      analogWrite(RR, Sp);
+  //      analogWrite(LF, 0);
+  //      analogWrite(RF, 0);
+  //    }
+  //    if (LEVal < REVal) {
+  //      analogWrite(LR, (Sp * SPCI));
+  //      analogWrite(RR, (Sp * SPC));
+  //      analogWrite(LF, 0);
+  //      analogWrite(RF, 0);
+  //    }
+  //    if (LEVal > REVal) {
+  //      analogWrite(LR, (Sp * SPC));
+  //      analogWrite(RR, (Sp * SPCI));
+  //      analogWrite(LF, 0);
+  //      analogWrite(RF, 0);
+  //    }
+  //  }
+  //  if (B == 4) {               // Right
+  //    if (LEVal == REVal) {
+  //      analogWrite(LF, TSp);
+  //      analogWrite(RR, TSp);
+  //      analogWrite(LR, 0);
+  //      analogWrite(RF, 0);
+  //    }
+  //    if (LEVal < REVal) {
+  //      analogWrite(LF, (TSp * SPCI));
+  //      analogWrite(RR, (TSp * SPC));
+  //      analogWrite(LR, 0);
+  //      analogWrite(RF, 0);
+  //    }
+  //    if (LEVal > REVal) {
+  //      analogWrite(LF, (TSp * SPC));
+  //      analogWrite(RR, (TSp * SPCI));
+  //      analogWrite(LR, 0);
+  //      analogWrite(RF, 0);
+  //    }
+  //  }
+  //  if (B == 8) {               // Left
+  //    if (LEVal == REVal) {
+  //      analogWrite(LR, TSp);
+  //      analogWrite(RF, TSp);
+  //      analogWrite(LF, 0);
+  //      analogWrite(RR, 0);
+  //    }
+  //    if (LEVal < REVal) {
+  //      analogWrite(LR, (TSp * SPCI));
+  //      analogWrite(RF, (TSp * SPC));
+  //      analogWrite(LF, 0);
+  //      analogWrite(RR, 0);
+  //    }
+  //    if (LEVal > REVal) {
+  //      analogWrite(LR, (TSp * SPC));
+  //      analogWrite(RF, (TSp * SPCI));
+  //      analogWrite(LF, 0);
+  //      analogWrite(RR, 0);
+  //    }
+  //  }
   if (B == 0) {               // Off
-    motorOff();
+    //motorOff();
   }
 
   if (DEBUG == true) {
@@ -348,90 +542,7 @@ void motorMapping() {
 //============
 
 void motorReverseMapping() {
-  
 
-  if (B == 6) {               // Forward
-    
-    if (LEVal == REVal) {
-      analogWrite(LF, Sp);
-      analogWrite(RF, Sp);
-      analogWrite(LR, 0);
-      analogWrite(RR, 0);
-    }
-    if (LEVal < REVal) {
-      analogWrite(LF, (Sp * SPCI));
-      analogWrite(RF, (Sp * SPC));
-      analogWrite(LR, 0);
-      analogWrite(RR, 0);
-    }
-    if (LEVal > REVal) {
-      analogWrite(LF, (Sp * SPC));
-      analogWrite(RF, (Sp * SPCI));
-      analogWrite(LR, 0);
-      analogWrite(RR, 0);
-    }
-  }
-  if (B == 2) {               // Reverse
-
-    if (LEVal == REVal) {
-      analogWrite(LR, Sp);
-      analogWrite(RR, Sp);
-      analogWrite(LF, 0);
-      analogWrite(RF, 0);
-    }
-    if (LEVal < REVal) {
-      analogWrite(LR, (Sp * SPCI));
-      analogWrite(RR, (Sp * SPC));
-      analogWrite(LF, 0);
-      analogWrite(RF, 0);
-    }
-    if (LEVal > REVal) {
-      analogWrite(LR, (Sp * SPC));
-      analogWrite(RR, (Sp * SPCI));
-      analogWrite(LF, 0);
-      analogWrite(RF, 0);
-    }
-  }
-  if (B == 4) {               // Right
-    if (LEVal == REVal) {
-      analogWrite(LF, TSp);
-      analogWrite(RR, TSp);
-      analogWrite(LR, 0);
-      analogWrite(RF, 0);
-    }
-    if (LEVal < REVal) {
-      analogWrite(LF, (TSp * SPCI));
-      analogWrite(RR, (TSp * SPC));
-      analogWrite(LR, 0);
-      analogWrite(RF, 0);
-    }
-    if (LEVal > REVal) {
-      analogWrite(LF, (TSp * SPC));
-      analogWrite(RR, (TSp * SPCI));
-      analogWrite(LR, 0);
-      analogWrite(RF, 0);
-    }
-  }
-  if (B == 8) {               // Left
-    if (LEVal == REVal) {
-      analogWrite(LR, TSp);
-      analogWrite(RF, TSp);
-      analogWrite(LF, 0);
-      analogWrite(RR, 0);
-    }
-    if (LEVal < REVal) {
-      analogWrite(LR, (TSp * SPCI));
-      analogWrite(RF, (TSp * SPC));
-      analogWrite(LF, 0);
-      analogWrite(RR, 0);
-    }
-    if (LEVal > REVal) {
-      analogWrite(LR, (TSp * SPC));
-      analogWrite(RF, (TSp * SPCI));
-      analogWrite(LF, 0);
-      analogWrite(RR, 0);
-    }
-  }
   if (B == 0) {               // Off
     motorOff();
   }
@@ -444,6 +555,7 @@ void motorReverseMapping() {
 
 //============
 
+
 void motorOff() {
   analogWrite(LF, 0);                      // turn off left motor
   analogWrite(LR, 0);                      // turn off right motor
@@ -453,82 +565,6 @@ void motorOff() {
 }
 
 ////////////// Sensors
-//============
-
-
-
-
-
-
-
-
-
-void Lencoder() {
-  LEVal++;
-  if (LEVal >= (INC + LEI)) {
-    LEVel();
-  }
-}
-
-//============
-
-void LEVel() {
-  LEV = ((LEVal - LEI) / ((micros() - LTIME) * .0000001))+LECOMP;
-  if(LEV>=5000){
-    LEV=LEVL;
-  }
-  LTIME = micros();
-  LEI = LEVal;
-  L++;
-  LEVS=LEVS+LEV;
-  if(L==AVG){
-    LEVA=LEVS/AVG;
-    L=0;
-    LEVS=0;
-  }
-  LEVL=LEV;
-}
-
-
-//============
-
-void Rencoder() {
-  REVal++;
-  if (REVal >= (INC + REI)) {
-    REVel();
-  }
-}
-
-//============
-
-void REVel() {
-    
-  REV = ((REVal - REI) / ((micros() - RTIME) * .0000001))+RECOMP;
-  if(REV>=5000){
-    REV=REVL;
-  }
-  RTIME = micros();
-  REI = REVal;
-  R++;
-  REVS=REVS+REV;
-  if(R==AVG){
-    REVA=REVS/AVG;
-    R=0;
-    REVS=0;
-  }
-  REVL=REV;
-}
-
-
-
-
-
-
-
-
-
-
-
 //============
 
 void QTICheck() {
@@ -609,17 +645,9 @@ void IR() {
 
 ////////////// Sensors
 //============
-long DIFFS=0;
-long Diff;
-long ADiff;
-int NDiffs=0;
+
 void debug() {
- if(REVA!=LEVAL){
-  NDiffs=NDiffs+1;
-  Diff=(LEVA-REVA);
-  if(Diff>-200 && Diff<200){
-  DIFFS=(DIFFS+Diff);
-  ADiff=(DIFFS/NDiffs);
+
   //  Serial.print(" | Robot: ");
   //  Serial.print(DesiredRobot);
   //  Serial.print(" | DPad: ");
@@ -636,22 +664,7 @@ void debug() {
   //  Serial.print(LEVal);
   //  Serial.print(" | RE: ");
   //  Serial.print(REVal);
-  Serial.print(" | LE: ");
-  Serial.print(LEV);
-  Serial.print(" | RE: ");
-  Serial.print(REV);
-  Serial.print(" | LEA: ");
-  Serial.print(LEVA);
-  Serial.print(" | REA: ");
-  Serial.print(REVA);
-  Serial.print(" | DIFF: ");
-  Serial.print(LEVA-REVA);
-  Serial.print(" | Avg Diff: ");
-  Serial.println(ADiff);
-  delay(25);
- }
- }
- LEVAL=REVA;
+
 }
 
 //============
@@ -671,23 +684,18 @@ void ledTest() {
 
 
 void LEDDebug() {
-  if (LEVal == REVal) {
-    digitalWrite(RED, LOW);
-    digitalWrite(GREEN, LOW);
-    digitalWrite(YELLOW, LOW);
-  }
+  //  if (LEVal == REVal) {
+  //    digitalWrite(RED, LOW);
+  //    digitalWrite(GREEN, LOW);
+  //    digitalWrite(YELLOW, LOW);
+  //  }
+  //
+  //  if (LEVal > REVal) {
+  //    digitalWrite(RED, HIGH);
+  //    digitalWrite(GREEN, LOW);
+  //    digitalWrite(YELLOW, LOW);
+  //  }
 
-  if (LEVal > REVal) {
-    digitalWrite(RED, HIGH);
-    digitalWrite(GREEN, LOW);
-    digitalWrite(YELLOW, LOW);
-  }
-
-  if (LEVal > REVal) {
-    digitalWrite(RED, LOW);
-    digitalWrite(GREEN, HIGH);
-    digitalWrite(YELLOW, LOW);
-  }
 }
 ////////////// Communication
 //============
