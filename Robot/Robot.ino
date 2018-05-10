@@ -50,9 +50,12 @@ int SPCI = 1;            // Motor Catch up value if encoder is less than other (
 
 //============ Gyro and PID
 
+#define MAXSPEED 220
+int moveSpeed = 0;
+
 double yawSetpoint, modifiedCurrentYaw, motorOffsetOutput;
 double currentYaw;
-double Kp = 5.0, Ki = 0.5, Kd = 0;
+double Kp = 4, Ki = 0.1, Kd = 0;
 PID steeringPID(&modifiedCurrentYaw, &motorOffsetOutput, &yawSetpoint, Kp, Ki, Kd, DIRECT);
 const int StabilizeSeconds = 15;
 double initialPose = 0.0;
@@ -61,6 +64,8 @@ MPU6050 mpu;
 
 const uint8_t InterruptPin = 2;
 const uint8_t LedPin = GREEN;
+
+boolean CDIR = false;
 
 // MPU control/status vars
 uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
@@ -96,6 +101,7 @@ void blink(uint8_t flashes, int pause) {
   }
 }
 
+int MOTORVALUE = 0;
 
 //============ Global Values
 
@@ -152,7 +158,7 @@ void setup() {
 
   // setup/initialization for the PID controller
   setYaw(0.0);
-  steeringPID.SetOutputLimits(-100.0, 100.0);  // **************** Check this ***************
+  steeringPID.SetOutputLimits(-MAXSPEED, MAXSPEED);  // **************** Check this ***************
   steeringPID.SetSampleTime(10);
   steeringPID.SetMode(AUTOMATIC);
 
@@ -244,34 +250,19 @@ void setup() {
 
 
 void loop() {
-  static unsigned long moveTimer = 0;
-  static uint8_t state = 220;
-  static int moveSpeed = 0.0;
-  static int stateCounter = 0;
+
+
+    if (moveSpeed < MAXSPEED) {
+      moveSpeed += 10;
+    }
+
+
+ 
+  setYaw(0);
+  motorMapping();
 
 
 
-  setYaw(0.0);
-  GYRO();
-
-
-  if (steeringPID.Compute()) {
-    motorMapping();
-    //    if(yawSetpoint,modifiedCurrentYaw
-  }
-
-  Serial.print(yawSetpoint);
-  Serial.print(',');
-  Serial.print(modifiedCurrentYaw);
-  Serial.print(',');
-  Serial.println(motorOffsetOutput);
-
-
-  //      analogWrite(LR, SP);
-  //      analogWrite(RR, .8*SP);
-  //      analogWrite(LF, 0);
-  //      analogWrite(RF, 0);
-  //      delay(2000);
 
   if (DEBUG == true) {
     debug();
@@ -440,103 +431,54 @@ void GYRO() {
 //============
 
 void motorMapping() {
+  GYRO();
+  steeringPID.Compute();
 
-  int moveSpeed = 255;
 
   analogWrite(LF, moveSpeed + motorOffsetOutput);
   analogWrite(RF, moveSpeed - motorOffsetOutput);
   analogWrite(LR, 0);
   analogWrite(RR, 0);
 
-  //  if (B == 2) {               // Forward
-  //
-  //    if (LEVal == REVal) {
-  //      analogWrite(LF, Sp);
-  //      analogWrite(RF, Sp);
-  //      analogWrite(LR, 0);
-  //      analogWrite(RR, 0);
-  //    }
-  //    if (LEVal < REVal) {
-  //      analogWrite(LF, (Sp * SPCI));
-  //      analogWrite(RF, (Sp * SPC));
-  //      analogWrite(LR, 0);
-  //      analogWrite(RR, 0);
-  //    }
-  //    if (LEVal > REVal) {
-  //      analogWrite(LF, (Sp * SPC));
-  //      analogWrite(RF, (Sp * SPCI));
-  //      analogWrite(LR, 0);
-  //      analogWrite(RR, 0);
-  //    }
-  //  }
-  //  if (B == 6) {               // Reverse
-  //
-  //    if (LEVal == REVal) {
-  //      analogWrite(LR, Sp);
-  //      analogWrite(RR, Sp);
-  //      analogWrite(LF, 0);
-  //      analogWrite(RF, 0);
-  //    }
-  //    if (LEVal < REVal) {
-  //      analogWrite(LR, (Sp * SPCI));
-  //      analogWrite(RR, (Sp * SPC));
-  //      analogWrite(LF, 0);
-  //      analogWrite(RF, 0);
-  //    }
-  //    if (LEVal > REVal) {
-  //      analogWrite(LR, (Sp * SPC));
-  //      analogWrite(RR, (Sp * SPCI));
-  //      analogWrite(LF, 0);
-  //      analogWrite(RF, 0);
-  //    }
-  //  }
-  //  if (B == 4) {               // Right
-  //    if (LEVal == REVal) {
-  //      analogWrite(LF, TSp);
-  //      analogWrite(RR, TSp);
-  //      analogWrite(LR, 0);
-  //      analogWrite(RF, 0);
-  //    }
-  //    if (LEVal < REVal) {
-  //      analogWrite(LF, (TSp * SPCI));
-  //      analogWrite(RR, (TSp * SPC));
-  //      analogWrite(LR, 0);
-  //      analogWrite(RF, 0);
-  //    }
-  //    if (LEVal > REVal) {
-  //      analogWrite(LF, (TSp * SPC));
-  //      analogWrite(RR, (TSp * SPCI));
-  //      analogWrite(LR, 0);
-  //      analogWrite(RF, 0);
-  //    }
-  //  }
-  //  if (B == 8) {               // Left
-  //    if (LEVal == REVal) {
-  //      analogWrite(LR, TSp);
-  //      analogWrite(RF, TSp);
-  //      analogWrite(LF, 0);
-  //      analogWrite(RR, 0);
-  //    }
-  //    if (LEVal < REVal) {
-  //      analogWrite(LR, (TSp * SPCI));
-  //      analogWrite(RF, (TSp * SPC));
-  //      analogWrite(LF, 0);
-  //      analogWrite(RR, 0);
-  //    }
-  //    if (LEVal > REVal) {
-  //      analogWrite(LR, (TSp * SPC));
-  //      analogWrite(RF, (TSp * SPCI));
-  //      analogWrite(LF, 0);
-  //      analogWrite(RR, 0);
-  //    }
-  //  }
-  if (B == 0) {               // Off
-    //motorOff();
-  }
+  
+//  MOTORVALUE = moveSpeed + motorOffsetOutput;
+//  int LEFT = moveSpeed + motorOffsetOutput;
+//  int RIGHT = moveSpeed - motorOffsetOutput;
+//
+//  if (LEFT > 0) {
+//    analogWrite(LF, LEFT);
+//    analogWrite(LR, 0);
+//  }
+//
+//  if (RIGHT > 0) {
+//    analogWrite(RF, RIGHT);
+//    analogWrite(RR, 0);
+//  }
+//  if (LEFT < 0) {
+//    analogWrite(LR, abs(LEFT));
+//    analogWrite(LF, 0);
+//  }
+//  if (RIGHT < 0) {
+//    analogWrite(RR, abs(RIGHT));
+//    analogWrite(RF, 0);
+//  }
+//  if (LEFT == 0) {
+//    analogWrite(LR, 0);
+//    analogWrite(LF, 0);
+//  }
+//  if (RIGHT == 0) {
+//    analogWrite(RR, 0);
+//    analogWrite(RF, 0);
+//  }
+//
+//
+//
+//
+//  analogWrite(LF, moveSpeed + motorOffsetOutput);
+//  analogWrite(RF, moveSpeed - motorOffsetOutput);
+//  analogWrite(LR, 0);
+//  analogWrite(RR, 0);
 
-  if (DEBUG == true) {
-    debug();
-  }
 }
 
 //============
@@ -647,6 +589,14 @@ void IR() {
 //============
 
 void debug() {
+  Serial.print(yawSetpoint);
+  Serial.print(',');
+  Serial.print(modifiedCurrentYaw);
+  Serial.print(',');
+  Serial.print(motorOffsetOutput);
+  Serial.print(',');
+  Serial.println(MOTORVALUE);
+
 
   //  Serial.print(" | Robot: ");
   //  Serial.print(DesiredRobot);

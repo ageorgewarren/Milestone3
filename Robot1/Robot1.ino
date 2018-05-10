@@ -250,8 +250,6 @@ void setup() {
 
 
 void loop() {
-  static unsigned long moveTimer = 0;
-  static uint8_t state = 220;
 
 
     if (moveSpeed < MAXSPEED) {
@@ -259,7 +257,7 @@ void loop() {
     }
 
 
-  moveSpeed = 0;
+ 
   setYaw(0);
   motorMapping();
 
@@ -435,43 +433,51 @@ void GYRO() {
 void motorMapping() {
   GYRO();
   steeringPID.Compute();
-  MOTORVALUE = moveSpeed + motorOffsetOutput;
-  int LEFT = moveSpeed + motorOffsetOutput;
-  int RIGHT = moveSpeed - motorOffsetOutput;
-
-  if (LEFT > 0) {
-    analogWrite(LF, LEFT);
-    analogWrite(LR, 0);
-  }
-
-  if (RIGHT > 0) {
-    analogWrite(RF, RIGHT);
-    analogWrite(RR, 0);
-  }
-  if (LEFT < 0) {
-    analogWrite(LR, abs(LEFT));
-    analogWrite(LF, 0);
-  }
-  if (RIGHT < 0) {
-    analogWrite(RR, abs(RIGHT));
-    analogWrite(RF, 0);
-  }
-  if (LEFT == 0) {
-    analogWrite(LR, 0);
-    analogWrite(LF, 0);
-  }
-  if (RIGHT == 0) {
-    analogWrite(RR, 0);
-    analogWrite(RF, 0);
-  }
-
-
 
 
   analogWrite(LF, moveSpeed + motorOffsetOutput);
   analogWrite(RF, moveSpeed - motorOffsetOutput);
   analogWrite(LR, 0);
   analogWrite(RR, 0);
+
+  
+//  MOTORVALUE = moveSpeed + motorOffsetOutput;
+//  int LEFT = moveSpeed + motorOffsetOutput;
+//  int RIGHT = moveSpeed - motorOffsetOutput;
+//
+//  if (LEFT > 0) {
+//    analogWrite(LF, LEFT);
+//    analogWrite(LR, 0);
+//  }
+//
+//  if (RIGHT > 0) {
+//    analogWrite(RF, RIGHT);
+//    analogWrite(RR, 0);
+//  }
+//  if (LEFT < 0) {
+//    analogWrite(LR, abs(LEFT));
+//    analogWrite(LF, 0);
+//  }
+//  if (RIGHT < 0) {
+//    analogWrite(RR, abs(RIGHT));
+//    analogWrite(RF, 0);
+//  }
+//  if (LEFT == 0) {
+//    analogWrite(LR, 0);
+//    analogWrite(LF, 0);
+//  }
+//  if (RIGHT == 0) {
+//    analogWrite(RR, 0);
+//    analogWrite(RF, 0);
+//  }
+//
+//
+//
+//
+//  analogWrite(LF, moveSpeed + motorOffsetOutput);
+//  analogWrite(RF, moveSpeed - motorOffsetOutput);
+//  analogWrite(LR, 0);
+//  analogWrite(RR, 0);
 
 }
 
