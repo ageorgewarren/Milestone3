@@ -8,7 +8,7 @@
 
 
 //============ Change these for each robot
-// Good Wiring Robot
+// UGLY DUCKLING
 
 #define robotnum 2          // Robot Number (1, 2, 3)
 #define LF 9                // Left Motor Forward
@@ -146,7 +146,7 @@ bool LIFT_COMPL = false;
 
 
 //============
-
+float LASTTIME=0;
 void setup() {
 
 
@@ -176,12 +176,12 @@ void setup() {
   }
   Serial.println(F("MPU6050 connection successful"));
 
-  mpu.setXAccelOffset(-426);
-  mpu.setYAccelOffset(71);
-  mpu.setZAccelOffset(1193);
-  mpu.setXGyroOffset(164);
-  mpu.setYGyroOffset(-23);
-  mpu.setZGyroOffset(9);
+  mpu.setXAccelOffset(-4957);
+  mpu.setYAccelOffset(-430);
+  mpu.setZAccelOffset(1765);
+  mpu.setXGyroOffset(-103);
+  mpu.setYGyroOffset(-51);
+  mpu.setZGyroOffset(-79);
 
   Serial.println(F("Initializing DMP..."));
   devStatus = mpu.dmpInitialize();
@@ -248,19 +248,25 @@ void setup() {
 }
 
 
-
 void loop() {
   static unsigned long moveTimer = 0;
   static uint8_t state = 220;
+  float TIME=millis();
 
 
     if (moveSpeed < MAXSPEED) {
       moveSpeed += 10;
     }
-
-
-  moveSpeed = 0;
-  setYaw(0);
+    
+  if(millis()>=LASTTIME+3500){
+    int turnvalue;
+    turnvalue += 90;
+    setYaw(turnvalue);
+    LASTTIME=TIME;
+  }
+  
+//  moveSpeed = 0;
+  
   motorMapping();
 
 
@@ -468,10 +474,10 @@ void motorMapping() {
 
 
 
-  analogWrite(LF, moveSpeed + motorOffsetOutput);
-  analogWrite(RF, moveSpeed - motorOffsetOutput);
-  analogWrite(LR, 0);
-  analogWrite(RR, 0);
+//  analogWrite(LF, moveSpeed + motorOffsetOutput);
+//  analogWrite(RF, moveSpeed - motorOffsetOutput);
+//  analogWrite(LR, 0);
+//  analogWrite(RR, 0);
 
 }
 
